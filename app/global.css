@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+body{
+    background-color: white;
+}
+.login_card{
+   height: 70vh;
+   width: 80vw;
+   max-height: 50rem;
+   max-width: 50rem;
+    background-color: #5D1A25;
+    box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.4);
+    border-radius: 2px;
+    position: relative;
+    border-radius: 10px;
+}
+.logo{
+    height: 40px;
+    width: 40px;
+}

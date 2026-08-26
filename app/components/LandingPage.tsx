@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 
 const LandingPage = () => {
@@ -27,7 +28,7 @@ const LandingPage = () => {
       </nav>
 
         {/* Hero Section */}
-        <div className="bg-color[#5D1A25] min-h-screen min-w-screen flex flex-col">
+        <div className="bg-[#5D1A25] min-h-screen min-w-screen flex flex-col">
           
         </div>
     </div>
