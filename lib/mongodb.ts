@@ -1,20 +1,32 @@
- import mongoose from "mongoose";
+import mongoose from "mongoose";
 
-const mongodb_URI = process.env.MONGODB_URI as string;
-const mongodbName = process.env.MONGODB_DB_NAME as string;
+const mongodbUri = process.env.MONGODB_URI ?? "";
+const mongodbName = process.env.MONGODB_DB_NAME ?? "chronyx";
 
-if(!mongodbName){
-    throw new Error("MONGODB_URI is not defined");
-}
-if(!mongodbName){
-    throw new Error("MONGODB_NAME is not defined");
-}
+const connectionState = {
+    isConnected: false,
+};
 
-export default async function connectDB(){
-    try{
-        mongoose.connect(mongodbName, {dbName: mongodbName});
+export default async function connectDb() {
+    if (mongoose.connection.readyState === 1) {
+        connectionState.isConnected = true;
+        return;
+    }
+
+    if (!mongodbUri) {
+        throw new Error("MONGODB_URI is not defined");
+    }
+
+    try {
+        await mongoose.connect(mongodbUri, {
+            dbName: mongodbName,
+            serverSelectionTimeoutMS: 5000,
+        });
+        connectionState.isConnected = true;
         console.log("Connected to MongoDB");
-    }catch(err){
-        console.log("Error connecting to MongoDB:", err);
+    } catch (error) {
+        connectionState.isConnected = false;
+        console.error("MongoDB connection failed:", error);
+        throw error;
     }
 }
