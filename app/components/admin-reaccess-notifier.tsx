@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { LockedLoginRecord } from '@/app/adminDashboard/login-access-panel'
 
 const REACCESS_UPDATED_EVENT = 'chronyx:reaccess-updated'
@@ -97,11 +98,13 @@ export default function AdminReaccessNotifier({
 
   const count = records.length
 
-  const toastBanner = toastRequest && (
-    <div
-      role="alert"
-      className="form-panel-enter fixed bottom-5 right-5 z-50 w-[min(360px,calc(100vw-2rem))] rounded-xl border border-[#e5cfd3] bg-white p-4 text-[#292326] shadow-[0_18px_45px_rgba(54,24,28,0.22)]"
-    >
+  const toastBanner =
+    toastRequest && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            role="alert"
+            className="form-panel-enter fixed bottom-5 right-5 z-[100] w-[min(360px,calc(100vw-2rem))] rounded-xl border border-[#e5cfd3] bg-white p-4 text-[#292326] shadow-[0_18px_45px_rgba(54,24,28,0.22)]"
+          >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2.5">
           <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fce9ec] text-[#8c1d32]">
@@ -157,8 +160,10 @@ export default function AdminReaccessNotifier({
           View all ({count})
         </a>
       </div>
-    </div>
-  )
+    </div>,
+          document.body,
+        )
+      : null
 
   if (variant === 'floating') {
     return (

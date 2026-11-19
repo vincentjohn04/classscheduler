@@ -5,6 +5,7 @@ import ScheduleManager from '@/app/adminDashboard/schedule/schedule-manager'
 import { redirect } from 'next/navigation'
 import { getAuthenticatedUser } from '@/lib/auth'
 import connectDb from '@/lib/mongodb'
+import { normalizeRoomUsageType } from '@/lib/rooms'
 import {
   isScheduleDay,
   scheduleDays,
@@ -174,7 +175,7 @@ export default async function AdminSchedulePage() {
           initialRooms={roomRecords.map((room) => ({
             id: room._id.toString(),
             name: room.name,
-            type: room.type === 'lab' ? 'lab' : 'lecture',
+            type: normalizeRoomUsageType(room.type),
           }))}
           initialCurriculum={curriculumRecords.map((record) => ({
             id: record._id.toString(),

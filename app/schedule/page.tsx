@@ -22,7 +22,9 @@ export default async function SchedulePage() {
     curriculumSubjects.find({}).select('name code category department').sort({ category: 1, name: 1 }).lean(),
     getSchedulePolicy(),
   ])
-  const roomTypeByName = new Map(roomRecords.map((room) => [room.name, room.type ?? 'lecture']))
+  const roomTypeByName = new Map(
+    roomRecords.map((room) => [room.name, room.type === 'lab' ? 'lab' as const : 'lecture' as const]),
+  )
   const assignments = records.map((record) => ({
     id: record._id.toString(),
     facultyId: user.id,

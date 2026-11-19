@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import connectDb from "@/lib/mongodb";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { users } from "@/model/user";

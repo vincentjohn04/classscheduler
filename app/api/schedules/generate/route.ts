@@ -3,7 +3,12 @@ import mongoose from 'mongoose'
 import * as z from 'zod'
 import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
-import { roomTypes, type RoomType } from '@/lib/rooms'
+import {
+    isRoomCompatibleWithClassType,
+    normalizeRoomUsageType,
+    roomTypes,
+    type RoomType,
+} from '@/lib/rooms'
 import { scheduleDays, type ScheduleAssignment } from '@/lib/schedule'
 import { getSchedulePolicy, getTimeMinutes } from '@/lib/schedule-policy'
 import { rooms } from '@/model/room'
@@ -52,8 +57,10 @@ export async function POST() {
     if (roomRecords.length === 0) {
         return NextResponse.json({ message: 'Add at least one room to the room inventory before generating a schedule.' }, { status: 409 })
     }
-    const availableRoomTypes = new Set(roomRecords.map((room) => room.type ?? 'lecture'))
-    const classWithoutRoom = pendingClasses.find((record) => !availableRoomTypes.has(record.classType ?? 'lecture'))
+    const classWithoutRoom = pendingClasses.find((record) => {
+        const neededType: RoomType = record.classType === 'lab' ? 'lab' : 'lecture'
+        return !roomRecords.some((room) => isRoomCompatibleWithClassType(room.type, neededType))
+    })
     if (classWithoutRoom) {
         const typeLabel = classWithoutRoom.classType === 'lab' ? 'Lab' : 'Lecture'
         return NextResponse.json({
@@ -65,12 +72,13 @@ export async function POST() {
     const roomsByName = new Map(roomRecords.map((room) => [room.name, room]))
     const roomsByLabel = new Map(roomRecords.map((room, index) => [
         `room-${index + 1}`,
-        { name: room.name, type: room.type ?? 'lecture' },
+        { name: room.name, type: normalizeRoomUsageType(room.type) },
     ]))
     const invalidRoomPreference = pendingClasses.find((record) => {
         if (!record.preferredRoom) return false
         const room = roomsByName.get(record.preferredRoom)
-        return !room || (room.type ?? 'lecture') !== (record.classType ?? 'lecture')
+        const neededType: RoomType = record.classType === 'lab' ? 'lab' : 'lecture'
+        return !room || !isRoomCompatibleWithClassType(room.type, neededType)
     })
     if (invalidRoomPreference) {
         return NextResponse.json({
@@ -96,11 +104,20 @@ export async function POST() {
         const [startHour, startMinute] = (record.startTime ?? '').split(':').map(Number)
         const [endHour, endMinute] = (record.endTime ?? '').split(':').map(Number)
 
+        const assignedRoomType = record.room ? normalizeRoomUsageType(roomsByName.get(record.room)?.type) : undefined
+        const resolvedClassType: RoomType = record.classType === 'lab'
+            ? 'lab'
+            : record.classType === 'lecture'
+                ? 'lecture'
+                : assignedRoomType === 'lab'
+                    ? 'lab'
+                    : 'lecture'
+
         return {
             faculty: facultyLabels.get(record.facultyId.toString()),
             room: record.room ? roomLabels.get(record.room) : undefined,
-            classType: record.classType ?? (record.room ? roomsByName.get(record.room)?.type : undefined) ?? 'lecture',
-            roomType: record.room ? roomsByName.get(record.room)?.type : undefined,
+            classType: resolvedClassType,
+            roomType: assignedRoomType,
             day: record.day,
             startTime: record.startTime,
             endTime: record.endTime,
@@ -112,7 +129,8 @@ export async function POST() {
         !record.faculty
         || !record.room
         || !roomTypes.includes(record.classType as RoomType)
-        || record.roomType !== record.classType
+        || !record.roomType
+        || !isRoomCompatibleWithClassType(record.roomType, record.classType)
         || typeof record.day !== 'string'
         || !schedulePolicy.teachingDays.includes(record.day as (typeof scheduleDays)[number])
         || !record.startTime
@@ -150,7 +168,7 @@ export async function POST() {
             for (const day of schedulePolicy.teachingDays) {
                 for (let start = scheduleStart; start + record.durationMinutes <= scheduleEnd; start += 15) {
                     for (const [roomLabel, room] of roomsByLabel) {
-                        if (room.type !== classType) continue
+                        if (!isRoomCompatibleWithClassType(room.type, classType)) continue
                         if (record.preferredRoom && room.name !== record.preferredRoom) continue
                         const end = start + record.durationMinutes
                         const facultyDay = facultyIntervals.get(`${faculty}:${day}`) ?? []
@@ -201,7 +219,7 @@ export async function POST() {
             'A room cannot be assigned to two classes at overlapping times on the same day.',
             'Do not overlap any existing class for the same faculty member.',
             'Do not overlap any existing class using the same room.',
-            'Every class must use a room whose type matches the classType exactly.',
+            'Every class must use a compatible room: a room with type "both" can host either lecture or lab classes; otherwise room type must match classType.',
             'If a class has preferredRoom, it must be assigned to that room. If preferredRoom is null or absent, select any compatible unoccupied room.',
             'Schedule every queued class exactly once; do not omit or add class IDs.',
             'Spread each faculty member’s classes across the week when possible.',
@@ -343,7 +361,7 @@ export async function POST() {
             return NextResponse.json({ message: 'The AI selected an unknown room. No classes were changed; please generate again.' }, { status: 502 })
         }
         const classType = roomTypes.includes(record.classType as RoomType) ? record.classType as RoomType : 'lecture'
-        if (selectedRoom.type !== classType) {
+        if (!isRoomCompatibleWithClassType(selectedRoom.type, classType)) {
             return NextResponse.json({
                 message: `The AI selected a room that is not compatible with this ${classType === 'lab' ? 'Lab' : 'Lecture'} class. No classes were changed; please generate again.`,
             }, { status: 409 })

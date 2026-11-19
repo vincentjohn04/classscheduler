@@ -1,17 +1,24 @@
 "use server"
 
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import connectDb from '@/lib/mongodb'
+import { getAuthenticatedUser } from '@/lib/auth'
 import { loginAttempts } from '@/model/login-attempt'
 import { passwordResetTokens } from '@/model/password-reset-token'
 import { reaccessRequests } from '@/model/reaccess-request'
+import { scheduleRequests } from '@/model/schedule-request'
+import { schedules } from '@/model/schedule'
 import { sessions } from '@/model/session'
 import { users } from '@/model/user'
 import {
+    ChangePasswordSchema,
+    ChangePasswordState,
+    DeleteAccountSchema,
+    DeleteAccountState,
     FormState,
     LoginSchema,
     MAX_ADMIN_ACCOUNTS,
@@ -20,6 +27,8 @@ import {
     PasswordResetSchema,
     PasswordResetState,
     SignUpSchema,
+    UpdateNameSchema,
+    UpdateNameState,
 } from './definition'
 
 const sessionDurationSeconds = 60 * 60 * 24 * 7
@@ -645,6 +654,193 @@ export async function signup(state: FormState, formData: FormData): Promise<Form
 
     await createSession(accountId)
     redirect(role === 'admin' ? '/adminDashboard' : '/dashboard')
+}
+
+export async function updateOwnName(
+    state: UpdateNameState,
+    formData: FormData,
+): Promise<UpdateNameState> {
+    const currentUser = await getAuthenticatedUser()
+    if (!currentUser) {
+        return { message: 'You must be signed in to update your name.' }
+    }
+
+    const validatedFields = UpdateNameSchema.safeParse({
+        name: formData.get('name'),
+    })
+    if (!validatedFields.success) {
+        return { errors: validatedFields.error.flatten().fieldErrors }
+    }
+
+    const nextName = validatedFields.data.name
+    if (nextName === currentUser.name) {
+        return {
+            success: true,
+            updatedName: nextName,
+            message: 'Your name is already up to date.',
+        }
+    }
+
+    try {
+        await connectDb()
+        const existingUser = await users.exists({
+            name: nextName,
+            _id: { $ne: currentUser.id },
+        })
+        if (existingUser) {
+            return {
+                errors: {
+                    name: ['That name is already taken by another account.'],
+                },
+            }
+        }
+
+        await users.updateOne(
+            { _id: currentUser.id },
+            { $set: { name: nextName } },
+        )
+    } catch (error) {
+        console.error('Error updating user name:', error)
+        return { message: 'Unable to update your name right now. Please try again.' }
+    }
+
+    revalidatePath('/dashboard')
+    revalidatePath('/adminDashboard')
+    revalidatePath('/settings')
+    revalidatePath('/adminDashboard/settings')
+
+    return {
+        success: true,
+        updatedName: nextName,
+        message: 'Your name has been updated.',
+    }
+}
+
+export async function changeOwnPassword(
+    state: ChangePasswordState,
+    formData: FormData,
+): Promise<ChangePasswordState> {
+    const currentUser = await getAuthenticatedUser()
+    if (!currentUser) {
+        return { message: 'You must be signed in to change your password.' }
+    }
+
+    const validatedFields = ChangePasswordSchema.safeParse({
+        currentPassword: formData.get('currentPassword'),
+        newPassword: formData.get('newPassword'),
+        confirmPassword: formData.get('confirmPassword'),
+    })
+    if (!validatedFields.success) {
+        return { errors: validatedFields.error.flatten().fieldErrors }
+    }
+
+    const { currentPassword, newPassword } = validatedFields.data
+
+    try {
+        await connectDb()
+        const dbUser = await users.findById(currentUser.id).select('password').lean()
+        if (!dbUser) {
+            return { message: 'Account not found.' }
+        }
+
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, dbUser.password)
+        if (!isCurrentPasswordValid) {
+            return {
+                errors: {
+                    currentPassword: ['Current password is incorrect.'],
+                },
+            }
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10)
+        await users.updateOne(
+            { _id: currentUser.id },
+            { $set: { password: hashedPassword } },
+        )
+
+        const sessionToken = (await cookies()).get('session')?.value
+        if (sessionToken) {
+            const currentTokenHash = createHash('sha256').update(sessionToken).digest('hex')
+            await sessions.deleteMany({
+                userId: currentUser.id,
+                tokenHash: { $ne: currentTokenHash },
+            })
+        }
+    } catch (error) {
+        console.error('Error changing password:', error)
+        return { message: 'Unable to change your password right now. Please try again.' }
+    }
+
+    return {
+        success: true,
+        message: 'Your password has been changed successfully.',
+    }
+}
+
+export async function deleteOwnAccount(
+    state: DeleteAccountState,
+    formData: FormData,
+): Promise<DeleteAccountState> {
+    const currentUser = await getAuthenticatedUser()
+    if (!currentUser) {
+        return { message: 'You must be signed in to delete your account.' }
+    }
+
+    const validatedFields = DeleteAccountSchema.safeParse({
+        password: formData.get('password'),
+        confirmation: formData.get('confirmation'),
+    })
+    if (!validatedFields.success) {
+        return { errors: validatedFields.error.flatten().fieldErrors }
+    }
+
+    try {
+        await connectDb()
+
+        const dbUser = await users.findById(currentUser.id).select('password role email').lean()
+        if (!dbUser) {
+            return { message: 'Account not found.' }
+        }
+
+        const isPasswordValid = await bcrypt.compare(validatedFields.data.password, dbUser.password)
+        if (!isPasswordValid) {
+            return {
+                errors: {
+                    password: ['Password is incorrect.'],
+                },
+            }
+        }
+
+        if (dbUser.role === 'admin') {
+            const adminCount = await users.countDocuments({ role: 'admin' })
+            if (adminCount <= 1) {
+                return {
+                    message:
+                        'You are the only administrator account. Add or promote another administrator before deleting your account.',
+                }
+            }
+        }
+
+        await Promise.all([
+            users.findByIdAndDelete(currentUser.id),
+            sessions.deleteMany({ userId: currentUser.id }),
+            passwordResetTokens.deleteMany({ userId: currentUser.id }),
+            schedules.deleteMany({ facultyId: currentUser.id }),
+            scheduleRequests.deleteMany({ facultyId: currentUser.id }),
+            loginAttempts.deleteOne({ email: dbUser.email }),
+            reaccessRequests.deleteOne({ email: dbUser.email }),
+        ])
+    } catch (error) {
+        console.error('Error deleting own account:', error)
+        return { message: 'Unable to delete your account right now. Please try again.' }
+    }
+
+    const cookieStore = await cookies()
+    cookieStore.delete('session')
+    revalidatePath('/login')
+    revalidatePath('/dashboard')
+    revalidatePath('/adminDashboard')
+    redirect('/login')
 }
 
 export async function logout() {

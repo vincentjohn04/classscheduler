@@ -2,7 +2,11 @@
 
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type { RoomType } from '@/lib/rooms'
+import {
+  isRoomCompatibleWithClassType,
+  type RoomType,
+  type RoomUsageType,
+} from '@/lib/rooms'
 import {
   formatScheduleTime,
   getScheduleEventStyle,
@@ -23,7 +27,7 @@ type FacultyMember = {
 type RoomOption = {
   id: string
   name: string
-  type: RoomType
+  type: RoomUsageType
 }
 
 type CurriculumOption = {
@@ -143,8 +147,12 @@ export default function ScheduleManager({
   const selectedCurriculum = subjectOptions.find((subject) => subject.id === selectedCurriculumId)
   const editSubjectOptions = initialCurriculum.filter((subject) => subject.category === editCategory)
   const editCurriculum = editSubjectOptions.find((subject) => subject.id === editCurriculumId)
-  const compatibleRoomOptions = roomOptions.filter((room) => room.type === classType)
-  const editRoomOptions = roomOptions.filter((room) => room.type === editClassType)
+  const compatibleRoomOptions = roomOptions.filter((room) =>
+    isRoomCompatibleWithClassType(room.type, classType),
+  )
+  const editRoomOptions = roomOptions.filter((room) =>
+    isRoomCompatibleWithClassType(room.type, editClassType),
+  )
   const selectedCompatibleRoomId = compatibleRoomOptions.some((room) => room.id === selectedRoomId)
     ? selectedRoomId
     : ''
@@ -595,7 +603,7 @@ export default function ScheduleManager({
           <button
             type="button"
             onClick={() => void generateSchedule()}
-            disabled={pendingClasses.length === 0 || pendingClasses.some((item) => !roomOptions.some((room) => room.type === item.classType)) || isGenerating || isSaving}
+            disabled={pendingClasses.length === 0 || pendingClasses.some((item) => !roomOptions.some((room) => isRoomCompatibleWithClassType(room.type, item.classType))) || isGenerating || isSaving}
             className="rounded-md bg-[#e43a3d] px-4 py-2 text-xs font-semibold text-white hover:bg-[#c92e33] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGenerating ? 'Generating…' : 'Generate conflict-free schedule with AI'}
@@ -603,7 +611,7 @@ export default function ScheduleManager({
           <span className="text-[11px] text-[#8b777b]">
             {pendingClasses.length} class{pendingClasses.length === 1 ? '' : 'es'} waiting to be scheduled
           </span>
-          {pendingClasses.some((item) => !roomOptions.some((room) => room.type === item.classType)) && (
+          {pendingClasses.some((item) => !roomOptions.some((room) => isRoomCompatibleWithClassType(room.type, item.classType))) && (
             <p className="w-full text-[11px] text-amber-800">
               Add at least one compatible room for each class type on the <a href="/adminDashboard/rooms" className="font-semibold underline">Rooms page</a> before generating a schedule.
             </p>
@@ -673,7 +681,7 @@ export default function ScheduleManager({
                 onChange={(event) => {
                   const type = event.target.value as RoomType
                   setEditClassType(type)
-                  const firstRoom = roomOptions.find((room) => room.type === type)
+                  const firstRoom = roomOptions.find((room) => isRoomCompatibleWithClassType(room.type, type))
                   if (firstRoom) setEditRoom(firstRoom.name)
                   else setEditRoom('')
                 }}

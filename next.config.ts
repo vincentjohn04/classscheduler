@@ -6,7 +6,6 @@ const nextConfig: NextConfig = {
     "pdfjs-dist",
     "@napi-rs/canvas",
     "mammoth",
-    "tesseract.js",
   ],
   enablePrerenderSourceMaps: false,
   experimental: {

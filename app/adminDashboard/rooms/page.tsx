@@ -5,6 +5,7 @@ import RoomManager from '@/app/adminDashboard/rooms/room-manager'
 import { redirect } from 'next/navigation'
 import { getAuthenticatedUser } from '@/lib/auth'
 import connectDb from '@/lib/mongodb'
+import { normalizeRoomUsageType } from '@/lib/rooms'
 import { rooms } from '@/model/room'
 
 export default async function AdminRoomsPage() {
@@ -17,7 +18,7 @@ export default async function AdminRoomsPage() {
   const initialRooms = roomRecords.map((room) => ({
     id: room._id.toString(),
     name: room.name,
-    type: room.type === 'lab' ? 'lab' as const : 'lecture' as const,
+    type: normalizeRoomUsageType(room.type),
   }))
 
   return (

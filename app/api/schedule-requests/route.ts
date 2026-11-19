@@ -5,7 +5,7 @@ import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { scheduleDays } from '@/lib/schedule'
 import { getSchedulePolicy } from '@/lib/schedule-policy'
-import { roomTypes, type RoomType } from '@/lib/rooms'
+import { getCompatibleRoomFilter, roomTypes, type RoomType } from '@/lib/rooms'
 import { rooms } from '@/model/room'
 import { scheduleRequests } from '@/model/schedule-request'
 import { schedules } from '@/model/schedule'
@@ -233,10 +233,11 @@ export async function PATCH(request: Request) {
         }, { status: 409 })
     }
 
-    const availableRooms = await rooms.find(classType === 'lecture'
-        ? { $or: [{ type: 'lecture' }, { type: { $exists: false } }] }
-        : { type: 'lab' },
-    ).select('name').sort({ name: 1 }).lean()
+    const availableRooms = await rooms
+        .find(getCompatibleRoomFilter(classType))
+        .select('name')
+        .sort({ name: 1 })
+        .lean()
     let selectedRoom: (typeof availableRooms)[number] | undefined
     for (const room of availableRooms) {
         const roomConflict = await schedules.exists({

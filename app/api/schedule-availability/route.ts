@@ -4,7 +4,7 @@ import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { scheduleDays } from '@/lib/schedule'
 import { getSchedulePolicy } from '@/lib/schedule-policy'
-import { roomTypes } from '@/lib/rooms'
+import { getCompatibleRoomFilter, roomTypes } from '@/lib/rooms'
 import { rooms } from '@/model/room'
 import { schedules } from '@/model/schedule'
 
@@ -42,10 +42,11 @@ export async function GET(request: Request) {
         }, { status: 400 })
     }
 
-    const availableRoomRecords = await rooms.find(classType === 'lecture'
-        ? { $or: [{ type: 'lecture' }, { type: { $exists: false } }] }
-        : { type: 'lab' },
-    ).select('name').sort({ name: 1 }).lean()
+    const availableRoomRecords = await rooms
+        .find(getCompatibleRoomFilter(classType))
+        .select('name')
+        .sort({ name: 1 })
+        .lean()
     const roomNames = availableRoomRecords.map((room) => room.name)
     const occupiedSchedules = roomNames.length
         ? await schedules.find({

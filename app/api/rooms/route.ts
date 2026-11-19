@@ -3,16 +3,16 @@ import mongoose from 'mongoose'
 import * as z from 'zod'
 import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
-import { roomTypes } from '@/lib/rooms'
+import { formatRoomUsageType, normalizeRoomUsageType, roomUsageTypes } from '@/lib/rooms'
 import { rooms } from '@/model/room'
 import { schedules } from '@/model/schedule'
 
 const roomSchema = z.object({
     name: z.string().trim().min(1).max(60),
-    type: z.enum(roomTypes).default('lecture'),
+    type: z.enum(roomUsageTypes).default('lecture'),
 })
 const roomTypeSchema = z.object({
-    type: z.enum(roomTypes),
+    type: z.enum(roomUsageTypes),
 })
 
 export async function GET() {
@@ -23,7 +23,11 @@ export async function GET() {
     await connectDb()
     const records = await rooms.find({}).select('name type').sort({ name: 1 }).lean()
     return NextResponse.json({
-        data: records.map((room) => ({ id: room._id.toString(), name: room.name, type: room.type ?? 'lecture' })),
+        data: records.map((room) => ({
+            id: room._id.toString(),
+            name: room.name,
+            type: normalizeRoomUsageType(room.type),
+        })),
     })
 }
 
@@ -76,7 +80,7 @@ export async function PATCH(request: Request) {
 
     const parsed = roomTypeSchema.safeParse(body)
     if (!parsed.success) {
-        return NextResponse.json({ message: 'Choose Lecture or Lab for this room.' }, { status: 400 })
+        return NextResponse.json({ message: 'Choose Lecture, Lab, or Both for this room.' }, { status: 400 })
     }
 
     await connectDb()
@@ -87,9 +91,10 @@ export async function PATCH(request: Request) {
     ).select('name type').lean()
     if (!room) return NextResponse.json({ message: 'Room not found.' }, { status: 404 })
 
+    const updatedType = normalizeRoomUsageType(room.type)
     return NextResponse.json({
-        data: { id: room._id.toString(), name: room.name, type: room.type },
-        message: `${room.name} updated to ${room.type === 'lab' ? 'Lab' : 'Lecture'}.`,
+        data: { id: room._id.toString(), name: room.name, type: updatedType },
+        message: `${room.name} updated to ${formatRoomUsageType(updatedType)}.`,
     })
 }
 

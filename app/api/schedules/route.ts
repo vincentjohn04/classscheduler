@@ -3,7 +3,7 @@ import mongoose from 'mongoose'
 import * as z from 'zod'
 import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
-import { roomTypes } from '@/lib/rooms'
+import { isRoomCompatibleWithClassType, roomTypes } from '@/lib/rooms'
 import { scheduleDays } from '@/lib/schedule'
 import { getSchedulePolicy } from '@/lib/schedule-policy'
 import { rooms } from '@/model/room'
@@ -57,7 +57,9 @@ export async function GET() {
     const records = await schedules.find(filter).sort({ createdAt: 1, startTime: 1 }).lean()
     const roomNames = [...new Set(records.map((record) => record.room).filter((room): room is string => !!room))]
     const roomRecords = await rooms.find({ name: { $in: roomNames } }).select('name type').lean()
-    const roomTypesByName = new Map(roomRecords.map((room) => [room.name, room.type ?? 'lecture']))
+    const roomTypesByName = new Map(
+        roomRecords.map((room) => [room.name, room.type === 'lab' ? 'lab' : 'lecture']),
+    )
     const facultyIds = [...new Set(records.map((record) => record.facultyId.toString()))]
     const faculty = await users.find({ _id: { $in: facultyIds } }).select('name email').lean()
     const facultyById = new Map(faculty.map((member) => [member._id.toString(), member]))
@@ -123,7 +125,7 @@ export async function POST(request: NextRequest) {
         if (!room) {
             return NextResponse.json({ message: 'Choose a room from the room inventory, or leave the room on automatic selection.' }, { status: 400 })
         }
-        if ((room.type ?? 'lecture') !== parsed.data.classType) {
+        if (!isRoomCompatibleWithClassType(room.type, parsed.data.classType)) {
             return NextResponse.json({ message: `Choose a ${parsed.data.classType === 'lab' ? 'Lab' : 'Lecture'} room for this class, or leave automatic selection.` }, { status: 409 })
         }
     }
@@ -177,7 +179,7 @@ export async function PATCH(request: NextRequest) {
     if (!roomRecord) {
         return NextResponse.json({ message: 'Select a room from the room inventory.' }, { status: 400 })
     }
-    if ((roomRecord.type ?? 'lecture') !== classType) {
+    if (!isRoomCompatibleWithClassType(roomRecord.type, classType)) {
         return NextResponse.json({
             message: `Choose a ${classType === 'lab' ? 'Lab' : 'Lecture'} room for this class.`,
         }, { status: 409 })

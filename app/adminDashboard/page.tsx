@@ -1,10 +1,10 @@
 /* eslint-disable @next/next/no-img-element */
 import AccountMenu from '@/app/components/account-menu'
 import AdminNavigation from '@/app/components/admin-navigation'
-import AdminReaccessNotifier from '@/app/components/admin-reaccess-notifier'
 import { redirect } from 'next/navigation'
 import { getAuthenticatedUser } from '@/lib/auth'
 import connectDb from '@/lib/mongodb'
+import { formatRoomUsageType } from '@/lib/rooms'
 import { reaccessRequests } from '@/model/reaccess-request'
 import { rooms } from '@/model/room'
 import { schedules } from '@/model/schedule'
@@ -104,10 +104,7 @@ export default async function AdminDashboardPage() {
             <img src="/chronyx.png" alt="" className="h-8 w-8 rounded-full object-cover" />
             <span className="text-base font-bold tracking-tight">Chronyx</span>
           </a>
-          <div className="flex items-center gap-3">
-            <AdminReaccessNotifier variant="bell" />
-            <AccountMenu name={user.name} email={user.email} accountType="Administrator" />
-          </div>
+          <AccountMenu name={user.name} email={user.email} accountType="Administrator" />
         </div>
       </header>
 
@@ -191,7 +188,7 @@ export default async function AdminDashboardPage() {
               <ul className="mt-3 flex flex-wrap gap-2" aria-label="Rooms available for scheduling">
                 {roomRecords.map((room) => (
                   <li key={room._id.toString()} className="rounded-full border border-[#eadde0] bg-[#fbf7f8] px-3 py-1 text-[10px] text-[#514a4c]">
-                    {room.name} · {(room.type ?? 'lecture').toLocaleUpperCase()}
+                    {room.name} · {formatRoomUsageType(room.type).toLocaleUpperCase()}
                   </li>
                 ))}
               </ul>
