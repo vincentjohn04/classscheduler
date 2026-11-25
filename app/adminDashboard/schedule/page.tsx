@@ -104,6 +104,9 @@ export default async function AdminSchedulePage() {
         subject: record.subject,
         category: record.category ?? '',
         classType: record.classType ?? 'lecture',
+        meetingPattern: record.meetingPattern ?? 'single',
+        patternGroupId: record.patternGroupId ?? undefined,
+        preferredDay: isScheduleDay(record.preferredDay) ? record.preferredDay : undefined,
         preferredRoom: record.preferredRoom ?? undefined,
         durationMinutes: record.durationMinutes,
       })
@@ -129,6 +132,7 @@ export default async function AdminSchedulePage() {
       subject: record.subject,
       category: record.category,
       classType: record.classType ?? (record.room ? roomTypeByName.get(record.room) : undefined) ?? 'lecture',
+      meetingPattern: record.meetingPattern ?? 'single',
       room: record.room ?? '',
       durationMinutes: record.durationMinutes ?? endHour * 60 + endMinute - startHour * 60 - startMinute,
       day: record.day,

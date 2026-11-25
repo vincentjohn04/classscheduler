@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import {
   formatScheduleTime,
   getScheduleEventStyle,
+  layoutOverlappingEvents,
   type ScheduleAssignment,
   type ScheduleDay,
 } from '@/lib/schedule'
@@ -44,11 +45,12 @@ type RoomAvailability = {
   conflicts: Array<{ startTime: string; endTime: string }>
 }
 
-const minZoom = 80
-const maxZoom = 400
-const zoomStep = 10
-const defaultZoom = 400
-const baseDayWidth = 180
+const minZoom = 70
+const maxZoom = 220
+const zoomStep = 15
+const defaultZoom = 100
+const baseHourHeight = 56
+const baseDayWidth = 175
 
 function getTimeMinutes(time: string) {
   const [hour, minute] = time.split(':').map(Number)
@@ -91,10 +93,11 @@ export default function Schedule({ name, email, assignments, curriculumOptions, 
   const days = schedulePolicy.teachingDays
   const scheduleStartMinute = getTimeMinutes(schedulePolicy.dayStartTime)
   const scheduleEndMinute = getTimeMinutes(schedulePolicy.dayEndTime)
-  const scheduleDurationHours = (scheduleEndMinute - scheduleStartMinute) / 60
+  const scheduleDurationMinutes = Math.max(60, scheduleEndMinute - scheduleStartMinute)
+  const scheduleDurationHours = scheduleDurationMinutes / 60
   const hours = Array.from(
-    { length: Math.ceil(scheduleDurationHours / 2) + 1 },
-    (_, index) => scheduleStartMinute + index * 120,
+    { length: Math.ceil(scheduleDurationHours) + 1 },
+    (_, index) => scheduleStartMinute + index * 60,
   ).filter((minute) => minute < scheduleEndMinute)
   hours.push(scheduleEndMinute)
   const defaultRequestEnd = formatTimeMinutes(Math.min(scheduleStartMinute + 60, scheduleEndMinute))
@@ -117,8 +120,10 @@ export default function Schedule({ name, email, assignments, curriculumOptions, 
   const [requestMessage, setRequestMessage] = useState('')
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false)
   const visibleDays = view === 'week' ? days.filter((day) => selectedWeekDays.includes(day)) : [selectedDay]
-  const dayColumnWidth = Math.round(baseDayWidth * zoom / 100)
-  const timelineMinWidth = 190 + visibleDays.length * dayColumnWidth + 32
+  const hourHeight = Math.round(baseHourHeight * zoom / 100)
+  const timelineHeight = Math.max(240, Math.round(scheduleDurationHours * hourHeight))
+  const dayColumnWidth = view === 'day' ? 280 : Math.round(baseDayWidth * Math.max(100, zoom) / 100)
+  const timelineMinWidth = 92 + visibleDays.length * dayColumnWidth + 24
   const visibleAssignments = assignments
     .filter((assignment) => visibleDays.includes(assignment.day))
     .sort((first, second) => (
@@ -625,104 +630,131 @@ export default function Schedule({ name, email, assignments, curriculumOptions, 
             </div>
             <div className="overflow-x-auto">
               <div className="p-3 sm:p-4" style={{ minWidth: `${timelineMinWidth}px` }}>
-                <div
-                  className="grid border-b border-[#e7dfe1]"
-                  style={{
-                    gridTemplateColumns: `190px repeat(${visibleDays.length}, minmax(${dayColumnWidth}px, 1fr))`,
-                  }}
-                >
-                  <div className="flex items-end px-2 pb-2 text-[10px] font-medium uppercase tracking-wide text-[#8b777b]">
-                    My Classes
-                  </div>
-                  {visibleDays.map((day) => (
-                    <div key={day} className="border-l border-[#eee6e7] px-2 pt-1">
-                      <h3 className="mb-2 text-center text-[11px] font-semibold text-[#5d1a25]">{day}</h3>
-                      <div className="relative h-3 text-[9px] text-[#8b777b]">
-                        {hours.map((minute) => (
-                          <span
-                            key={minute}
-                            className={`absolute ${
-                              minute === scheduleStartMinute ? 'translate-x-0'
-                                : minute === scheduleEndMinute ? '-translate-x-full'
-                                  : '-translate-x-1/2'
-                            }`}
-                            style={{ left: `${((minute - scheduleStartMinute) / (scheduleEndMinute - scheduleStartMinute)) * 100}%` }}
-                          >
-                            {formatScheduleTime(formatTimeMinutes(minute))}
-                          </span>
-                        ))}
+                {visibleDays.length > 0 ? (
+                  <div className="overflow-hidden rounded-lg border border-[#e7dfe1]">
+                    {/* X-axis: Days */}
+                    <div
+                      className="grid border-b border-[#e7dfe1] bg-[#fbf9fa]"
+                      style={{
+                        gridTemplateColumns: `92px repeat(${visibleDays.length}, minmax(${dayColumnWidth}px, 1fr))`,
+                      }}
+                    >
+                      <div className="sticky left-0 z-10 flex items-center border-r border-[#e4d8da] bg-[#fbf9fa] px-3 py-2.5 text-[10px] font-medium uppercase tracking-wide text-[#8b777b]">
+                        Time
                       </div>
+                      {visibleDays.map((day) => {
+                        const dayCount = assignments.filter((assignment) => assignment.day === day).length
+                        return (
+                          <div key={day} className="border-l border-[#eee6e7] px-2 py-2.5 text-center">
+                            <h3 className="text-[11px] font-semibold text-[#5d1a25]">{day}</h3>
+                            <p className="mt-0.5 text-[9px] text-[#8b777b]">
+                              {dayCount} class{dayCount === 1 ? '' : 'es'}
+                            </p>
+                          </div>
+                        )
+                      })}
                     </div>
-                  ))}
-                </div>
-                <div
-                  className="grid min-h-[220px]"
-                  style={{
-                    gridTemplateColumns: `190px repeat(${visibleDays.length}, minmax(${dayColumnWidth}px, 1fr))`,
-                  }}
-                >
-                  <div aria-hidden="true" className="border-b border-[#eee6e7]" />
-                  {visibleDays.map((day) => {
-                    const dayAssignments = assignments.filter((assignment) => assignment.day === day)
 
-                    return (
-                      <div
-                        key={day}
-                        aria-label={`${day}, ${dayAssignments.length} classes`}
-                        className="relative min-h-[220px] border-b border-l border-[#eee6e7]"
-                        style={{
-                          backgroundImage: 'linear-gradient(to right, #f0ebec 1px, transparent 1px)',
-                          backgroundSize: `${100 / scheduleDurationHours}% 100%`,
-                          backgroundRepeat: 'repeat-x',
-                        }}
-                      >
-                        {dayAssignments.map((assignment) => (
-                          <article
-                            key={assignment.id}
-                            aria-label={`${assignment.subject}${assignment.category ? `, ${assignment.category}` : ''}, ${assignment.room || 'room unassigned'}, ${formatScheduleTime(assignment.startTime)} to ${formatScheduleTime(assignment.endTime)}`}
-                            title={`${assignment.subject}${assignment.category ? ` · ${assignment.category}` : ''} · ${assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · ${assignment.room || 'Room unassigned'} · ${formatScheduleTime(assignment.startTime)}–${formatScheduleTime(assignment.endTime)}`}
-                            className="absolute top-3 flex h-14 flex-col justify-center overflow-hidden rounded-md border border-[#d8abb2] bg-[#f7ecee] px-2 text-[10px] text-[#5d1a25] shadow-sm"
-                            style={getScheduleEventStyle(
-                              assignment.startTime,
-                              assignment.endTime,
-                              schedulePolicy.dayStartTime,
-                              schedulePolicy.dayEndTime,
-                            )}
+                    {/* Y-axis: Time & Day Columns */}
+                    <div
+                      className="relative grid"
+                      style={{
+                        height: `${timelineHeight}px`,
+                        gridTemplateColumns: `92px repeat(${visibleDays.length}, minmax(${dayColumnWidth}px, 1fr))`,
+                      }}
+                    >
+                      <div className="sticky left-0 z-10 border-r border-[#e4d8da] bg-[#fcfafa]">
+                        {hours.map((minute) => {
+                          const offsetPercent = ((minute - scheduleStartMinute) / scheduleDurationMinutes) * 100
+                          return (
+                            <span
+                              key={minute}
+                              className={`absolute inset-x-0 px-2 text-right text-[10px] font-medium text-[#76676a] ${
+                                minute === scheduleStartMinute ? 'translate-y-1'
+                                  : minute === scheduleEndMinute ? '-translate-y-full pb-1'
+                                    : '-translate-y-1/2'
+                              }`}
+                              style={{ top: `${offsetPercent}%` }}
+                            >
+                              {formatScheduleTime(formatTimeMinutes(minute))}
+                            </span>
+                          )
+                        })}
+                      </div>
+
+                      {visibleDays.map((day) => {
+                        const dayAssignments = assignments.filter((assignment) => assignment.day === day)
+                        const laidOutAssignments = layoutOverlappingEvents(dayAssignments)
+
+                        return (
+                          <div
+                            key={day}
+                            aria-label={`${day}, ${dayAssignments.length} classes`}
+                            className="relative border-l border-[#eee6e7]"
+                            style={{
+                              height: `${timelineHeight}px`,
+                              backgroundImage:
+                                'linear-gradient(to bottom, #e4d8da 1px, transparent 1px), linear-gradient(to bottom, #f4eef0 1px, transparent 1px)',
+                              backgroundSize: `100% ${hourHeight}px, 100% ${hourHeight / 2}px`,
+                              backgroundRepeat: 'repeat-y, repeat-y',
+                            }}
                           >
-                            <span className="truncate font-semibold">
-                              {assignment.subject}{assignment.category ? ` · ${assignment.category}` : ''}
-                            </span>
-                            <span className="truncate text-[9px]">{assignment.classType === 'lab' ? 'Lab' : 'Lecture'}</span>
-                            <span className="truncate text-[9px]">{assignment.room || 'Room unassigned'}</span>
-                            <span className="truncate text-[9px]">
-                              {formatScheduleTime(assignment.startTime)}–{formatScheduleTime(assignment.endTime)}
-                            </span>
-                          </article>
-                        ))}
-                      </div>
-                    )
-                  })}
-                  {visibleAssignments.length === 0 && (
-                    <div className="col-span-full flex items-center justify-center px-4 py-8 text-center">
-                      <div>
-                        <p className="text-sm font-medium text-[#514a4c]">
-                          {assignments.length === 0
-                            ? 'Your schedule is not available yet'
-                            : view === 'day'
-                              ? `No classes assigned on ${selectedDay}.`
-                              : selectedWeekDays.length === 0
-                                ? 'Select at least one day to view your schedule.'
-                                : 'No classes are assigned on the selected days.'}
-                        </p>
-                        <p className="mt-1 text-xs text-[#8b777b]">
-                          {assignments.length === 0
-                            ? 'Once your subjects are assigned, your class schedule will appear here.'
-                            : 'Choose different days or select all days to see more classes.'}
-                        </p>
-                      </div>
+                            {laidOutAssignments.map(({ event: assignment, column, columns }) => {
+                              const verticalStyle = getScheduleEventStyle(
+                                assignment.startTime,
+                                assignment.endTime,
+                                schedulePolicy.dayStartTime,
+                                schedulePolicy.dayEndTime,
+                              )
+                              const columnWidth = 100 / columns
+                              return (
+                                <article
+                                  key={assignment.id}
+                                  aria-label={`${assignment.subject}${assignment.category ? `, ${assignment.category}` : ''}, ${assignment.room || 'room unassigned'}, ${formatScheduleTime(assignment.startTime)} to ${formatScheduleTime(assignment.endTime)}`}
+                                  title={`${assignment.subject}${assignment.category ? ` · ${assignment.category}` : ''} · ${assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · ${assignment.room || 'Room unassigned'} · ${formatScheduleTime(assignment.startTime)}–${formatScheduleTime(assignment.endTime)}`}
+                                  className="absolute flex flex-col justify-center overflow-hidden rounded-md border border-[#d8abb2] bg-[#f7ecee] px-2 py-1 text-[10px] leading-tight text-[#5d1a25] shadow-sm"
+                                  style={{
+                                    ...verticalStyle,
+                                    left: `calc(${column * columnWidth}% + 4px)`,
+                                    width: `calc(${columnWidth}% - 8px)`,
+                                  }}
+                                >
+                                  <span className="truncate font-semibold">
+                                    {assignment.subject}{assignment.category ? ` · ${assignment.category}` : ''}
+                                  </span>
+                                  <span className="truncate text-[9px]">
+                                    {assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · {assignment.room || 'Room unassigned'}
+                                  </span>
+                                  <span className="truncate text-[9px]">
+                                    {formatScheduleTime(assignment.startTime)}–{formatScheduleTime(assignment.endTime)}
+                                  </span>
+                                </article>
+                              )
+                            })}
+                          </div>
+                        )
+                      })}
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : null}
+                {visibleAssignments.length === 0 && (
+                  <div className="mt-3 rounded-lg bg-[#faf7f8] px-4 py-5 text-center">
+                    <p className="text-sm font-medium text-[#514a4c]">
+                      {assignments.length === 0
+                        ? 'Your schedule is not available yet'
+                        : view === 'day'
+                          ? `No classes assigned on ${selectedDay}.`
+                          : selectedWeekDays.length === 0
+                            ? 'Select at least one day to view your schedule.'
+                            : 'No classes are assigned on the selected days.'}
+                    </p>
+                    <p className="mt-1 text-xs text-[#8b777b]">
+                      {assignments.length === 0
+                        ? 'Once your subjects are assigned, your class schedule will appear here.'
+                        : 'Choose different days or select all days to see more classes.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </section>

@@ -234,16 +234,22 @@ export default function SettingsManager({ initialSettings, setupStatus }: Settin
         </div>
         <ul className="mt-4 grid gap-3 text-sm text-[#5b4b50] sm:grid-cols-2 xl:grid-cols-4">
           <li className="rounded-xl bg-[#faf7f8] p-3.5">
-            <p className="font-semibold text-[#302326]">Teaching hours</p>
-            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">Classes run between {dayStartTime} and {dayEndTime}.</p>
+            <p className="font-semibold text-[#302326]">Teaching hours &amp; lunch</p>
+            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">
+              Classes run between {dayStartTime} and {dayEndTime} while protecting the 12:00 PM–1:00 PM noon lunch break.
+            </p>
           </li>
           <li className="rounded-xl bg-[#faf7f8] p-3.5">
-            <p className="font-semibold text-[#302326]">Teaching days</p>
-            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">{teachingDays.join(', ')}.</p>
+            <p className="font-semibold text-[#302326]">Philippine patterns</p>
+            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">
+              Supports synchronized MWF (1h), TTh (1.5h), MW, and 3-hour blocks across {teachingDays.join(', ')}.
+            </p>
           </li>
           <li className="rounded-xl bg-[#faf7f8] p-3.5">
-            <p className="font-semibold text-[#302326]">Conflict checks</p>
-            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">Faculty and room overlaps are prevented.</p>
+            <p className="font-semibold text-[#302326]">Faculty load &amp; breaks</p>
+            <p className="mt-1 text-xs leading-relaxed text-[#796a6e]">
+              Prevents faculty/room conflicts and avoids over 3 consecutive teaching hours without a break.
+            </p>
           </li>
           <li className="rounded-xl bg-[#faf7f8] p-3.5">
             <p className="font-semibold text-[#302326]">Room matching</p>

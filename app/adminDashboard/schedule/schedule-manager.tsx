@@ -8,9 +8,15 @@ import {
   type RoomUsageType,
 } from '@/lib/rooms'
 import {
+  formatMeetingPattern,
   formatScheduleTime,
+  getPatternDays,
+  getRecommendedSchedulePreset,
   getScheduleEventStyle,
+  layoutOverlappingEvents,
+  meetingPatterns,
   scheduleDays,
+  type MeetingPattern,
   type ScheduleAssignment,
   type ScheduleClassRequest,
   type ScheduleDay,
@@ -48,10 +54,11 @@ type ScheduleManagerProps = {
   schedulePolicy: SchedulePolicy
 }
 
-const minTimelineZoom = 80
-const maxTimelineZoom = 300
-const timelineZoomStep = 20
-const baseTimelineDayWidth = 280
+const minTimelineZoom = 70
+const maxTimelineZoom = 220
+const timelineZoomStep = 15
+const baseHourHeight = 56
+const baseTimelineDayWidth = 180
 
 function sortAssignments(assignments: ScheduleAssignment[]) {
   return [...assignments].sort((a, b) => (
@@ -106,9 +113,11 @@ export default function ScheduleManager({
   const [assignments, setAssignments] = useState(sortAssignments(initialSchedules))
   const [pendingClasses, setPendingClasses] = useState(initialPending)
   const [scheduleRequests, setScheduleRequests] = useState(initialRequests)
-  const [timelineZoom, setTimelineZoom] = useState(120)
+  const [timelineZoom, setTimelineZoom] = useState(100)
+  const [timelineFacultyFilter, setTimelineFacultyFilter] = useState('all')
   const roomOptions = initialRooms
   const [classType, setClassType] = useState<RoomType>('lecture')
+  const [meetingPattern, setMeetingPattern] = useState<MeetingPattern>('single')
   const [selectedRoomId, setSelectedRoomId] = useState('')
   const [facultyId, setFacultyId] = useState(facultyMembers[0]?.id ?? '')
   const [category, setCategory] = useState('')
@@ -132,16 +141,22 @@ export default function ScheduleManager({
   const [requestReviewError, setRequestReviewError] = useState('')
   const [requestReviewNotice, setRequestReviewNotice] = useState('')
   const classDurationMinutes = Number(durationHours) * 60 + Number(durationRemainder)
-  const timelineDayWidth = Math.round(baseTimelineDayWidth * timelineZoom / 100)
-  const timelineMinWidth = 220 + schedulePolicy.teachingDays.length * timelineDayWidth + 24
   const scheduleStartMinute = getTimeMinutes(schedulePolicy.dayStartTime)
   const scheduleEndMinute = getTimeMinutes(schedulePolicy.dayEndTime)
-  const scheduleDurationHours = (scheduleEndMinute - scheduleStartMinute) / 60
+  const scheduleDurationMinutes = Math.max(60, scheduleEndMinute - scheduleStartMinute)
+  const scheduleDurationHours = scheduleDurationMinutes / 60
+  const timelineHourHeight = Math.round(baseHourHeight * timelineZoom / 100)
+  const timelineHeight = Math.max(260, Math.round(scheduleDurationHours * timelineHourHeight))
+  const timelineDayWidth = Math.round(baseTimelineDayWidth * Math.max(100, timelineZoom) / 100)
+  const timelineMinWidth = 92 + schedulePolicy.teachingDays.length * timelineDayWidth + 24
   const timelineMarkers = Array.from(
-    { length: Math.ceil(scheduleDurationHours / 3) + 1 },
-    (_, index) => scheduleStartMinute + index * 180,
+    { length: Math.ceil(scheduleDurationHours) + 1 },
+    (_, index) => scheduleStartMinute + index * 60,
   ).filter((minute) => minute < scheduleEndMinute)
   timelineMarkers.push(scheduleEndMinute)
+  const filteredTimelineAssignments = timelineFacultyFilter === 'all'
+    ? assignments
+    : assignments.filter((assignment) => assignment.facultyId === timelineFacultyFilter)
   const curriculumCategories = [...new Set(initialCurriculum.map((subject) => subject.category))]
   const subjectOptions = initialCurriculum.filter((subject) => subject.category === category)
   const selectedCurriculum = subjectOptions.find((subject) => subject.id === selectedCurriculumId)
@@ -160,6 +175,46 @@ export default function ScheduleManager({
     Number(durationHours) * 60 + minutes <= 780
     && (Number(durationHours) > 0 || minutes > 0)
   ))
+
+  function isPatternSupported(pattern: MeetingPattern) {
+    const days = getPatternDays(pattern)
+    return days.every((day) => schedulePolicy.teachingDays.includes(day))
+  }
+
+  function applyRecommendedPreset(units: number | undefined, nextType: RoomType) {
+    const preset = getRecommendedSchedulePreset(units, nextType)
+    if (isPatternSupported(preset.pattern)) {
+      setMeetingPattern(preset.pattern)
+      setDurationHours(preset.durationHours)
+      setDurationRemainder(preset.durationMinutes)
+    } else {
+      setMeetingPattern('single')
+      setDurationHours(units && units >= 1 && units <= 3 && nextType === 'lecture' ? String(units) : '3')
+      setDurationRemainder('0')
+    }
+  }
+
+  function handlePatternChange(nextPattern: MeetingPattern) {
+    setMeetingPattern(nextPattern)
+    if (nextPattern === 'MWF') {
+      setDurationHours('1')
+      setDurationRemainder('0')
+    } else if (nextPattern === 'TTh' || nextPattern === 'MW') {
+      setDurationHours('1')
+      setDurationRemainder('30')
+    } else if (classType === 'lab' || selectedCurriculum?.units === 3) {
+      setDurationHours('3')
+      setDurationRemainder('0')
+    }
+  }
+
+  const selectedFacultyScheduledMinutes = assignments
+    .filter((item) => item.facultyId === facultyId)
+    .reduce((sum, item) => sum + item.durationMinutes, 0)
+  const selectedFacultyPendingMinutes = pendingClasses
+    .filter((item) => item.facultyId === facultyId)
+    .reduce((sum, item) => sum + item.durationMinutes, 0)
+  const selectedFacultyTotalHours = (selectedFacultyScheduledMinutes + selectedFacultyPendingMinutes) / 60
 
   async function addClass(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -180,6 +235,7 @@ export default function ScheduleManager({
           subject: selectedCurriculum.name,
           category: selectedCurriculum.category,
           classType,
+          meetingPattern,
           preferredRoom: roomOptions.find((room) => room.id === selectedCompatibleRoomId)?.name,
           durationMinutes: classDurationMinutes,
         }),
@@ -191,7 +247,8 @@ export default function ScheduleManager({
         return
       }
 
-      setPendingClasses((current) => [...current, result.data])
+      const addedItems = Array.isArray(result.data) ? result.data : [result.data]
+      setPendingClasses((current) => [...current, ...addedItems])
       setCategory('')
       setSelectedCurriculumId('')
     } catch {
@@ -250,8 +307,8 @@ export default function ScheduleManager({
       setAssignments((current) => sortAssignments([...current, ...result.data]))
       setPendingClasses([])
       setNotice(result.mode === 'automatic'
-        ? `AI is unavailable. Automatically scheduled and saved ${result.data.length} class${result.data.length === 1 ? '' : 'es'} to MongoDB with no faculty or room conflicts.`
-        : `Generated and saved ${result.data.length} class${result.data.length === 1 ? '' : 'es'} to MongoDB with no faculty or room conflicts.`)
+        ? `Scheduled and saved ${result.data.length} class${result.data.length === 1 ? '' : 'es'} using Philippine academic scheduling rules (standard bell blocks, 12:00–1:00 PM lunch protection, synchronized MWF/TTh patterns, and zero conflicts).`
+        : `Generated and saved ${result.data.length} class${result.data.length === 1 ? '' : 'es'} using AI + Philippine academic scheduling rules with zero faculty or room conflicts.`)
     } catch {
       setError('Unable to reach the server. Please try again.')
     } finally {
@@ -436,7 +493,7 @@ export default function ScheduleManager({
       <section aria-labelledby="add-schedule-title" className="mb-5 rounded-lg bg-white p-4 shadow-[0_2px_5px_rgba(31,41,55,0.16)] sm:p-5">
         <h2 id="add-schedule-title" className="text-sm font-semibold text-[#5d1a25]">Classes to schedule</h2>
         <p className="mt-1 text-[11px] text-[#8b777b]">
-          Select a class category and subject from the recorded curriculum. The generator assigns open times on {schedulePolicy.teachingDays.join(', ')} between {schedulePolicy.dayStartTime} and {schedulePolicy.dayEndTime}, without faculty or room conflicts.
+          Follows Philippine academic scheduling (CHED): assigns classes on {schedulePolicy.teachingDays.join(', ')} ({schedulePolicy.dayStartTime}–{schedulePolicy.dayEndTime}), protects the 12:00 PM–1:00 PM lunch break, aligns MWF (1h) / TTh (1.5h) bell blocks at the same time &amp; room, and avoids over 3 consecutive teaching hours without a break.
         </p>
         {initialCurriculum.length === 0 && (
           <p className="mt-2 text-[11px] text-amber-800">
@@ -480,7 +537,7 @@ export default function ScheduleManager({
             {' '}Choose one to reserve your preference, or leave automatic selection for conflict-aware room assignment.
           </p>
         </div>
-        <form onSubmit={addClass} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <form onSubmit={addClass} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(6,minmax(0,1fr))_auto]">
           <label className="flex flex-col gap-1 text-[11px] font-medium text-[#705c60]">
             Faculty member
             <select
@@ -521,7 +578,12 @@ export default function ScheduleManager({
             <select
               required
               value={selectedCurriculumId}
-              onChange={(event) => setSelectedCurriculumId(event.target.value)}
+              onChange={(event) => {
+                const nextId = event.target.value
+                setSelectedCurriculumId(nextId)
+                const matched = subjectOptions.find((subject) => subject.id === nextId)
+                applyRecommendedPreset(matched?.units, classType)
+              }}
               disabled={isSaving || subjectOptions.length === 0}
               className="rounded-md border border-[#d9c9cc] bg-white px-3 py-2 text-xs text-[#383236] disabled:bg-[#f5f2f2]"
             >
@@ -540,14 +602,34 @@ export default function ScheduleManager({
             <select
               value={classType}
               onChange={(event) => {
-                setClassType(event.target.value as RoomType)
+                const nextType = event.target.value as RoomType
+                setClassType(nextType)
                 setSelectedRoomId('')
+                applyRecommendedPreset(selectedCurriculum?.units, nextType)
               }}
               disabled={isSaving}
               className="rounded-md border border-[#d9c9cc] bg-white px-3 py-2 text-xs text-[#383236]"
             >
               <option value="lecture">Lecture</option>
               <option value="lab">Lab</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-[#705c60]">
+            Meeting pattern
+            <select
+              value={meetingPattern}
+              onChange={(event) => handlePatternChange(event.target.value as MeetingPattern)}
+              disabled={isSaving}
+              className="rounded-md border border-[#d9c9cc] bg-white px-3 py-2 text-xs text-[#383236]"
+            >
+              {meetingPatterns.map((pattern) => {
+                const supported = isPatternSupported(pattern)
+                return (
+                  <option key={pattern} value={pattern} disabled={!supported}>
+                    {formatMeetingPattern(pattern)}{!supported ? ' (Day disabled)' : ''}
+                  </option>
+                )
+              })}
             </select>
           </label>
           <fieldset className="flex flex-col gap-1 text-[11px] font-medium text-[#705c60]">
@@ -598,6 +680,20 @@ export default function ScheduleManager({
             </button>
           </div>
         </form>
+
+        {facultyId && (
+          <p className={`mt-3 text-[11px] ${selectedFacultyTotalHours > 24 ? 'font-medium text-amber-800' : 'text-[#8b777b]'}`}>
+            Selected faculty weekly load:{' '}
+            <span className="font-semibold text-[#5d1a25]">
+              {(selectedFacultyScheduledMinutes / 60).toFixed(1)} hrs scheduled
+            </span>
+            {selectedFacultyPendingMinutes > 0
+              ? ` + ${(selectedFacultyPendingMinutes / 60).toFixed(1)} hrs queued (${selectedFacultyTotalHours.toFixed(1)} hrs total)`
+              : ''}
+            {' · '}CHED regular full-time norm: 18–24 hrs/week.
+            {selectedFacultyTotalHours > 24 ? ' (Exceeds 24 hrs/week regular load.)' : ''}
+          </p>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-[#eee6e7] pt-4">
           <button
@@ -734,6 +830,7 @@ export default function ScheduleManager({
                 <thead>
                   <tr className="bg-[#fbf9fa] text-[#755f64]">
                     <th scope="col" className="px-4 py-3 font-medium">Subject / class</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Pattern / day</th>
                     <th scope="col" className="px-4 py-3 font-medium">Type</th>
                     <th scope="col" className="px-4 py-3 font-medium">Faculty member</th>
                     <th scope="col" className="px-4 py-3 font-medium">Room</th>
@@ -745,6 +842,10 @@ export default function ScheduleManager({
                   {pendingClasses.map((classRequest) => (
                     <tr key={classRequest.id}>
                       <td className="px-4 py-3 font-medium text-[#383236]">{classRequest.subject} · {classRequest.category}</td>
+                      <td className="px-4 py-3 text-[#62595c]">
+                        {formatMeetingPattern(classRequest.meetingPattern)}
+                        {classRequest.preferredDay ? ` · ${classRequest.preferredDay}` : ''}
+                      </td>
                       <td className="px-4 py-3 text-[#62595c]">{classRequest.classType === 'lab' ? 'Lab' : 'Lecture'}</td>
                       <td className="px-4 py-3 text-[#62595c]">{classRequest.facultyName}</td>
                       <td className="px-4 py-3 text-[#62595c]">{classRequest.preferredRoom || 'Auto-pick'}</td>
@@ -819,107 +920,152 @@ export default function ScheduleManager({
                 {schedulePolicy.teachingDays.join('–')} · {formatScheduleTime(schedulePolicy.dayStartTime)}–{formatScheduleTime(schedulePolicy.dayEndTime)}
               </p>
             </div>
-            <div
-              role="group"
-              aria-label="Weekly faculty schedule zoom controls"
-              className="flex w-fit items-center gap-1 rounded-lg border border-[#e7dfe1] bg-white p-1"
-            >
-              <button
-                type="button"
-                aria-label="Zoom out"
-                disabled={timelineZoom <= minTimelineZoom}
-                onClick={() => setTimelineZoom((current) => Math.max(minTimelineZoom, current - timelineZoomStep))}
-                className="flex h-7 w-7 items-center justify-center rounded text-base text-[#5d1a25] hover:bg-[#f6eff0] disabled:cursor-not-allowed disabled:opacity-40"
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-[11px] font-medium text-[#705c60]">
+                <span className="sr-only sm:not-sr-only">Faculty</span>
+                <select
+                  aria-label="Filter weekly schedule by faculty member"
+                  value={timelineFacultyFilter}
+                  onChange={(event) => setTimelineFacultyFilter(event.target.value)}
+                  className="rounded-lg border border-[#e7dfe1] bg-white px-2.5 py-1.5 text-xs text-[#383236]"
+                >
+                  <option value="all">All faculty ({facultyMembers.length})</option>
+                  {facultyMembers.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div
+                role="group"
+                aria-label="Weekly faculty schedule zoom controls"
+                className="flex w-fit items-center gap-1 rounded-lg border border-[#e7dfe1] bg-white p-1"
               >
-                −
-              </button>
-              <button
-                type="button"
-                aria-label={`Reset zoom, currently ${timelineZoom}%`}
-                onClick={() => setTimelineZoom(100)}
-                className="min-w-12 rounded px-1 text-[10px] font-medium text-[#705c60] hover:bg-[#f6eff0]"
-              >
-                {timelineZoom}%
-              </button>
-              <button
-                type="button"
-                aria-label="Zoom in"
-                disabled={timelineZoom >= maxTimelineZoom}
-                onClick={() => setTimelineZoom((current) => Math.min(maxTimelineZoom, current + timelineZoomStep))}
-                className="flex h-7 w-7 items-center justify-center rounded text-base text-[#5d1a25] hover:bg-[#f6eff0] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                +
-              </button>
+                <button
+                  type="button"
+                  aria-label="Zoom out"
+                  disabled={timelineZoom <= minTimelineZoom}
+                  onClick={() => setTimelineZoom((current) => Math.max(minTimelineZoom, current - timelineZoomStep))}
+                  className="flex h-7 w-7 items-center justify-center rounded text-base text-[#5d1a25] hover:bg-[#f6eff0] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Reset zoom, currently ${timelineZoom}%`}
+                  onClick={() => setTimelineZoom(100)}
+                  className="min-w-12 rounded px-1 text-[10px] font-medium text-[#705c60] hover:bg-[#f6eff0]"
+                >
+                  {timelineZoom}%
+                </button>
+                <button
+                  type="button"
+                  aria-label="Zoom in"
+                  disabled={timelineZoom >= maxTimelineZoom}
+                  onClick={() => setTimelineZoom((current) => Math.min(maxTimelineZoom, current + timelineZoomStep))}
+                  className="flex h-7 w-7 items-center justify-center rounded text-base text-[#5d1a25] hover:bg-[#f6eff0] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  +
+                </button>
+              </div>
             </div>
           </div>
           <div className="overflow-x-auto">
             <div className="px-3 pb-4 sm:px-4" style={{ minWidth: `${timelineMinWidth}px` }}>
-              <div
-                className="grid border-b border-[#e7dfe1]"
-                style={{ gridTemplateColumns: `220px repeat(${schedulePolicy.teachingDays.length}, minmax(${timelineDayWidth}px, 1fr))` }}
-              >
-                <div className="px-3 pb-2 text-[10px] font-medium uppercase tracking-wide text-[#8b777b]">Faculty member</div>
-                {schedulePolicy.teachingDays.map((day) => (
-                  <div key={day} className="relative h-12 border-l border-[#e4d8da] text-center">
-                    <span className="absolute inset-x-0 top-0 text-[11px] font-semibold text-[#5d1a25]">{day}</span>
-                    {timelineMarkers.map((minute) => (
-                      <span
-                        key={minute}
-                        className={`absolute bottom-1 text-[9px] font-medium text-[#76676a] ${
-                          minute === scheduleStartMinute ? 'translate-x-0'
-                            : minute === scheduleEndMinute ? '-translate-x-full'
-                              : '-translate-x-1/2'
-                        }`}
-                        style={{ left: `${((minute - scheduleStartMinute) / (scheduleEndMinute - scheduleStartMinute)) * 100}%` }}
-                      >
-                        {formatScheduleTime(`${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`)}
-                      </span>
-                    ))}
-                  </div>
-                ))}
-              </div>
-              {facultyMembers.map((member) => (
+              <div className="overflow-hidden rounded-lg border border-[#e7dfe1]">
+                {/* X-axis: Days */}
                 <div
-                  key={member.id}
-                  className="grid min-h-[104px] border-b border-[#e4d8da]"
-                  style={{ gridTemplateColumns: `220px repeat(${schedulePolicy.teachingDays.length}, minmax(${timelineDayWidth}px, 1fr))` }}
+                  className="grid border-b border-[#e7dfe1] bg-[#fbf9fa]"
+                  style={{ gridTemplateColumns: `92px repeat(${schedulePolicy.teachingDays.length}, minmax(${timelineDayWidth}px, 1fr))` }}
                 >
-                  <div className="flex flex-col justify-center border-r border-[#e4d8da] bg-[#fcfafa] px-3 py-2">
-                    <span className="text-xs font-semibold text-[#383236]">{member.name}</span>
-                    <span className="mt-1 text-[10px] text-[#76676a]">
-                      {assignments.filter((assignment) => assignment.facultyId === member.id).length} class(es)
-                    </span>
+                  <div className="sticky left-0 z-10 flex items-center border-r border-[#e4d8da] bg-[#fbf9fa] px-3 py-2.5 text-[10px] font-medium uppercase tracking-wide text-[#8b777b]">
+                    Time
                   </div>
                   {schedulePolicy.teachingDays.map((day) => {
-                    const dayAssignments = assignments.filter((assignment) => assignment.facultyId === member.id && assignment.day === day)
+                    const dayCount = filteredTimelineAssignments.filter((assignment) => assignment.day === day).length
+                    return (
+                      <div key={day} className="border-l border-[#e4d8da] px-2 py-2.5 text-center">
+                        <div className="text-[11px] font-semibold text-[#5d1a25]">{day}</div>
+                        <div className="mt-0.5 text-[9px] text-[#8b777b]">
+                          {dayCount} class{dayCount === 1 ? '' : 'es'}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Y-axis: Time & Day Columns */}
+                <div
+                  className="relative grid"
+                  style={{
+                    height: `${timelineHeight}px`,
+                    gridTemplateColumns: `92px repeat(${schedulePolicy.teachingDays.length}, minmax(${timelineDayWidth}px, 1fr))`,
+                  }}
+                >
+                  <div className="sticky left-0 z-10 border-r border-[#e4d8da] bg-[#fcfafa]">
+                    {timelineMarkers.map((minute) => {
+                      const offsetPercent = ((minute - scheduleStartMinute) / scheduleDurationMinutes) * 100
+                      return (
+                        <span
+                          key={minute}
+                          className={`absolute inset-x-0 px-2 text-right text-[10px] font-medium text-[#76676a] ${
+                            minute === scheduleStartMinute ? 'translate-y-1'
+                              : minute === scheduleEndMinute ? '-translate-y-full pb-1'
+                                : '-translate-y-1/2'
+                          }`}
+                          style={{ top: `${offsetPercent}%` }}
+                        >
+                          {formatScheduleTime(`${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`)}
+                        </span>
+                      )
+                    })}
+                  </div>
+
+                  {schedulePolicy.teachingDays.map((day) => {
+                    const dayAssignments = filteredTimelineAssignments.filter((assignment) => assignment.day === day)
+                    const laidOutAssignments = layoutOverlappingEvents(dayAssignments)
 
                     return (
                       <div
                         key={day}
-                        aria-label={`${member.name}, ${day}, ${dayAssignments.length} classes`}
-                        className="relative min-h-[104px] border-l border-[#e4d8da]"
+                        aria-label={`${day}, ${dayAssignments.length} classes`}
+                        className="relative border-l border-[#e4d8da]"
                         style={{
-                          backgroundImage: 'linear-gradient(to right, #e0d1d4 1px, transparent 1px), linear-gradient(to right, #f0e9ea 1px, transparent 1px)',
-                          backgroundSize: `${300 / scheduleDurationHours}% 100%, ${100 / scheduleDurationHours}% 100%`,
-                          backgroundRepeat: 'repeat-x, repeat-x',
+                          height: `${timelineHeight}px`,
+                          backgroundImage:
+                            'linear-gradient(to bottom, #e0d1d4 1px, transparent 1px), linear-gradient(to bottom, #f0e9ea 1px, transparent 1px)',
+                          backgroundSize: `100% ${timelineHourHeight}px, 100% ${timelineHourHeight / 2}px`,
+                          backgroundRepeat: 'repeat-y, repeat-y',
                         }}
                       >
-                        {dayAssignments.map((assignment) => {
+                        {laidOutAssignments.map(({ event: assignment, column, columns }) => {
                           const subjectColor = getSubjectColor(assignment.subject, assignment.classType)
+                          const verticalStyle = getScheduleEventStyle(
+                            assignment.startTime,
+                            assignment.endTime,
+                            schedulePolicy.dayStartTime,
+                            schedulePolicy.dayEndTime,
+                          )
+                          const columnWidth = 100 / columns
+
                           return (
                             <div
                               key={assignment.id}
-                              title={`${assignment.subject}${assignment.category ? ` · ${assignment.category}` : ''} · ${assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · ${assignment.room || 'Room unassigned'} · ${formatScheduleTime(assignment.startTime)}–${formatScheduleTime(assignment.endTime)}`}
-                              className={`absolute top-6 flex h-14 flex-col items-start justify-center overflow-hidden rounded-r-md border-y border-r border-l-4 px-2 text-[10px] font-semibold leading-tight shadow-sm ${subjectColor.border} ${subjectColor.background} ${subjectColor.text}`}
-                              style={getScheduleEventStyle(
-                                assignment.startTime,
-                                assignment.endTime,
-                                schedulePolicy.dayStartTime,
-                                schedulePolicy.dayEndTime,
-                              )}
+                              title={`${assignment.subject}${assignment.category ? ` · ${assignment.category}` : ''} · ${assignment.facultyName} · ${assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · ${assignment.room || 'Room unassigned'} · ${formatScheduleTime(assignment.startTime)}–${formatScheduleTime(assignment.endTime)}`}
+                              className={`absolute flex flex-col items-start justify-center overflow-hidden rounded-md border-y border-r border-l-4 px-2 py-1 text-[10px] font-semibold leading-tight shadow-sm ${subjectColor.border} ${subjectColor.background} ${subjectColor.text}`}
+                              style={{
+                                ...verticalStyle,
+                                left: `calc(${column * columnWidth}% + 4px)`,
+                                width: `calc(${columnWidth}% - 8px)`,
+                              }}
                             >
                               <span className="w-full truncate">{assignment.subject}</span>
                               <span className="w-full truncate text-[9px] font-medium">
+                                {assignment.facultyName}
+                              </span>
+                              <span className="w-full truncate text-[9px] font-normal">
                                 {assignment.classType === 'lab' ? 'Lab' : 'Lecture'} · {assignment.room || 'Room unassigned'}
                               </span>
                             </div>
@@ -929,7 +1075,7 @@ export default function ScheduleManager({
                     )
                   })}
                 </div>
-              ))}
+              </div>
             </div>
           </div>
         </section>

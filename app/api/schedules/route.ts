@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import mongoose from 'mongoose'
 import * as z from 'zod'
 import connectDb from '@/lib/mongodb'
 import { getAuthenticatedUser } from '@/lib/auth'
 import { isRoomCompatibleWithClassType, roomTypes } from '@/lib/rooms'
-import { scheduleDays } from '@/lib/schedule'
+import { getPatternDays, meetingPatterns, scheduleDays } from '@/lib/schedule'
 import { getSchedulePolicy } from '@/lib/schedule-policy'
 import { rooms } from '@/model/room'
 import { schedules } from '@/model/schedule'
@@ -17,6 +18,7 @@ const classInputSchema = z.object({
     subject: z.string().trim().min(1).max(100),
     category: z.string().trim().min(1).max(100),
     classType: z.enum(roomTypes).default('lecture'),
+    meetingPattern: z.enum(meetingPatterns).default('single'),
     preferredRoom: z.string().trim().min(1).max(60).optional(),
     durationMinutes: z.number().int().min(15).max(780),
 })
@@ -75,6 +77,9 @@ export async function GET() {
             subject: record.subject,
             category: record.category ?? '',
             classType: record.classType ?? roomTypesByName.get(record.room ?? '') ?? 'lecture',
+            meetingPattern: record.meetingPattern ?? 'single',
+            patternGroupId: record.patternGroupId ?? undefined,
+            preferredDay: record.preferredDay ?? undefined,
             preferredRoom: record.preferredRoom ?? undefined,
             room: record.room ?? '',
             durationMinutes: record.durationMinutes,
@@ -130,12 +135,45 @@ export async function POST(request: NextRequest) {
         }
     }
 
-    const created = await schedules.create({
-        ...parsed.data,
-        status: 'pending',
-    })
+    const patternDays = getPatternDays(parsed.data.meetingPattern)
+    if (patternDays.length > 0) {
+        const policy = await getSchedulePolicy()
+        const missingDay = patternDays.find((day) => !policy.teachingDays.includes(day))
+        if (missingDay) {
+            return NextResponse.json({
+                message: `Cannot queue ${parsed.data.meetingPattern} because ${missingDay} is disabled in Workspace Settings.`,
+            }, { status: 400 })
+        }
+    }
+
+    const patternGroupId = patternDays.length > 0 ? randomUUID() : undefined
+    const documentsToCreate = patternDays.length > 0
+        ? patternDays.map((preferredDay) => ({
+            facultyId: parsed.data.facultyId,
+            subject: parsed.data.subject,
+            category: parsed.data.category,
+            classType: parsed.data.classType,
+            meetingPattern: parsed.data.meetingPattern,
+            patternGroupId,
+            preferredDay,
+            preferredRoom: parsed.data.preferredRoom,
+            durationMinutes: parsed.data.durationMinutes,
+            status: 'pending' as const,
+        }))
+        : [{
+            facultyId: parsed.data.facultyId,
+            subject: parsed.data.subject,
+            category: parsed.data.category,
+            classType: parsed.data.classType,
+            meetingPattern: 'single' as const,
+            preferredRoom: parsed.data.preferredRoom,
+            durationMinutes: parsed.data.durationMinutes,
+            status: 'pending' as const,
+        }]
+
+    const createdDocs = await schedules.insertMany(documentsToCreate)
     return NextResponse.json({
-        data: {
+        data: createdDocs.map((created) => ({
             id: created._id.toString(),
             facultyId: parsed.data.facultyId,
             facultyName: member.name,
@@ -143,9 +181,12 @@ export async function POST(request: NextRequest) {
             subject: created.subject,
             category: created.category,
             classType: created.classType,
+            meetingPattern: created.meetingPattern,
+            patternGroupId: created.patternGroupId ?? undefined,
+            preferredDay: created.preferredDay ?? undefined,
             preferredRoom: created.preferredRoom ?? undefined,
             durationMinutes: created.durationMinutes,
-        },
+        })),
     }, { status: 201 })
 }
 
